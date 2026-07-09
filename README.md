@@ -20,7 +20,7 @@ payload in order, concatenates the payload stream, and feeds it back into
 ## Pack
 
 ```bash
-python -m seven_z_streamer pack /data/bigfolder /transfer \
+python -m filetransfer pack /data/bigfolder /transfer \
   --prefix bigfolder-transfer \
   --chunk-size 100M \
   --zstd
@@ -46,7 +46,7 @@ bigfolder-transfer-manifest.7z
 ## Restore
 
 ```bash
-python -m seven_z_streamer restore /transfer/bigfolder-transfer-manifest.7z /restore-target
+python -m filetransfer restore /transfer/bigfolder-transfer-manifest.7z /restore-target
 ```
 
 If all package checksums match, the byte stream is reconstructed exactly.
@@ -66,15 +66,8 @@ The restored files are produced by `tar`; existing files may be overwritten by
 
 ## Code Structure
 
-- `cli.py`: thin process entry point and error handling.
-- `arguments.py`: command-line parser and subcommand wiring.
-- `pack.py`: pack workflow orchestration.
-- `restore.py`: restore workflow orchestration.
-- `verify.py`: checksum verification command.
-- `manifest.py`: manifest creation, loading, validation, and package checks.
-- `container_7z.py`: creates and extracts `.7z` transport containers.
-- `stream_source.py`: starts `tar`/`zstd` source streams and reads chunks.
-- `payload_stream.py`: extracts package payloads in manifest order.
-- `toolchain.py`: finds and validates required system tools.
-- `validators.py`: CLI value parsers such as chunk size and prefix.
-- `checksum.py`, `processes.py`: small shared utilities.
+- `filetransfer/cli.py`: thin process entry point and error handling.
+- `filetransfer/arguments.py`: command-line parser and subcommand wiring.
+- `filetransfer/commands/`: top-level workflows for `pack`, `restore`, and `verify`.
+- `filetransfer/core/`: transfer-domain logic such as manifests, `.7z` containers, and streams.
+- `filetransfer/system/`: system helpers for tools, processes, checksums, validation, and errors.

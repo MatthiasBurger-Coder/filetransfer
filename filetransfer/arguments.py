@@ -3,11 +3,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from .constants import DEFAULT_CHUNK_SIZE
-from .pack import pack
-from .restore import restore
-from .validators import parse_prefix, parse_size, parse_zstd_level
-from .verify import verify
+from .commands.pack import pack
+from .commands.restore import restore
+from .commands.verify import verify
+from .core.constants import DEFAULT_CHUNK_SIZE
+from .system.validators import parse_prefix, parse_size, parse_zstd_level
 
 
 def build_parser() -> argparse.ArgumentParser:

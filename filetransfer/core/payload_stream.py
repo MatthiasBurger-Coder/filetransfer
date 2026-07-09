@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import BinaryIO
 
 from .container_7z import extract_payload_to_stdout
-from .errors import StreamerError
+from ..system.errors import StreamerError
 
 
 def stream_payloads(manifest_path: Path, manifest: dict, output: BinaryIO, seven_zip: str) -> None:

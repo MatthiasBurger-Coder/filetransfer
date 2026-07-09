@@ -4,8 +4,8 @@ import subprocess
 from pathlib import Path
 from typing import BinaryIO
 
-from .errors import StreamerError
-from .toolchain import require_toolchain
+from ..system.errors import StreamerError
+from ..system.toolchain import require_toolchain
 
 
 def source_tar_args(source: Path, tar: str) -> list[str]:

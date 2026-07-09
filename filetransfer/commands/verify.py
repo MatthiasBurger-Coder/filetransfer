@@ -3,8 +3,8 @@ from __future__ import annotations
 import argparse
 import sys
 
-from .manifest import load_manifest, verify_packages
-from .toolchain import require_toolchain
+from ..core.manifest import load_manifest, verify_packages
+from ..system.toolchain import require_toolchain
 
 
 def verify(args: argparse.Namespace) -> int:

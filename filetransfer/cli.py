@@ -5,7 +5,7 @@ import sys
 from typing import Sequence
 
 from .arguments import build_parser
-from .errors import StreamerError
+from .system.errors import StreamerError
 
 
 def main(argv: Sequence[str] | None = None) -> int:

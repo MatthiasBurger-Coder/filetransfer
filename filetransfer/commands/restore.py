@@ -4,11 +4,11 @@ import argparse
 import subprocess
 import sys
 
-from .errors import StreamerError
-from .manifest import load_manifest, verify_packages
-from .payload_stream import stream_payloads
-from .processes import terminate_processes
-from .toolchain import require_toolchain
+from ..core.manifest import load_manifest, verify_packages
+from ..core.payload_stream import stream_payloads
+from ..system.errors import StreamerError
+from ..system.processes import terminate_processes
+from ..system.toolchain import require_toolchain
 
 
 def restore(args: argparse.Namespace) -> int:

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from seven_z_streamer.manifest import load_manifest
-from seven_z_streamer.validators import parse_prefix, parse_size, parse_zstd_level
+from filetransfer.core.manifest import load_manifest
+from filetransfer.system.validators import parse_prefix, parse_size, parse_zstd_level
 
 
 def test_parse_size_decimal_and_binary_units() -> None:
@@ -88,8 +88,8 @@ def test_load_manifest_reads_7z_manifest_package(monkeypatch, tmp_path) -> None:
                 b"",
             )
 
-    monkeypatch.setattr("seven_z_streamer.manifest.require_toolchain", lambda use_zstd: SimpleNamespace(seven_zip="7z"))
-    monkeypatch.setattr("seven_z_streamer.manifest.extract_file_to_stdout", lambda *args: FakeProcess())
+    monkeypatch.setattr("filetransfer.core.manifest.require_toolchain", lambda use_zstd: SimpleNamespace(seven_zip="7z"))
+    monkeypatch.setattr("filetransfer.core.manifest.extract_file_to_stdout", lambda *args: FakeProcess())
 
     loaded = load_manifest(manifest_package)
 

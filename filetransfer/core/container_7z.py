@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 
 from .constants import PAYLOAD_NAME
-from .errors import StreamerError
+from ..system.errors import StreamerError
 
 
 def create_7z_package(

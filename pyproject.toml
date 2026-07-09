@@ -8,12 +8,12 @@ license = { text = "MIT" }
 authors = [{ name = "7z-streamer contributors" }]
 
 [project.scripts]
-filetransfer = "seven_z_streamer.cli:main"
-7z-streamer = "seven_z_streamer.cli:main"
+filetransfer = "filetransfer.cli:main"
+7z-streamer = "filetransfer.cli:main"
 
 [build-system]
 requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
-include = ["seven_z_streamer*"]
+include = ["filetransfer*"]

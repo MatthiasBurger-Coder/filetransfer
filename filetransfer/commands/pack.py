@@ -7,14 +7,14 @@ import tempfile
 from pathlib import Path
 from typing import BinaryIO
 
-from .checksum import write_bytes_with_sha256
-from .constants import MANIFEST_NAME, PAYLOAD_NAME
-from .container_7z import create_7z_package
-from .errors import StreamerError
-from .manifest import add_package, finalize_manifest, new_manifest
-from .processes import check_processes, terminate_processes
-from .stream_source import read_chunk, start_source_stream
-from .toolchain import require_toolchain
+from ..core.constants import MANIFEST_NAME, PAYLOAD_NAME
+from ..core.container_7z import create_7z_package
+from ..core.manifest import add_package, finalize_manifest, new_manifest
+from ..core.stream_source import read_chunk, start_source_stream
+from ..system.checksum import write_bytes_with_sha256
+from ..system.errors import StreamerError
+from ..system.processes import check_processes, terminate_processes
+from ..system.toolchain import require_toolchain
 
 
 def pack(args: argparse.Namespace) -> int:
