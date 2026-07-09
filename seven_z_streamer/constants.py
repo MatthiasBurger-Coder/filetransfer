@@ -1,3 +1,4 @@
 PAYLOAD_NAME = "payload.bin"
+MANIFEST_NAME = "manifest.json"
 MANIFEST_VERSION = 1
 DEFAULT_CHUNK_SIZE = "100M"

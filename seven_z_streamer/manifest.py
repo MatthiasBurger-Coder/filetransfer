@@ -5,8 +5,10 @@ import time
 from pathlib import Path
 
 from .checksum import sha256_file
-from .constants import MANIFEST_VERSION, PAYLOAD_NAME
+from .constants import MANIFEST_NAME, MANIFEST_VERSION, PAYLOAD_NAME
+from .container_7z import extract_file_to_stdout
 from .errors import StreamerError
+from .toolchain import require_toolchain
 
 
 def new_manifest(source: Path, prefix: str, chunk_size: int, use_zstd: bool, zstd_level: int) -> dict:
@@ -45,8 +47,36 @@ def finalize_manifest(manifest: dict, total_payload_bytes: int) -> None:
 
 
 def load_manifest(path: Path) -> dict:
+    if path.suffix == ".7z":
+        manifest = _load_manifest_package(path)
+    else:
+        manifest = _load_manifest_json(path)
+    _validate_manifest(manifest)
+    return manifest
+
+
+def _load_manifest_json(path: Path) -> dict:
     with path.open("r", encoding="utf-8") as handle:
-        manifest = json.load(handle)
+        return json.load(handle)
+
+
+def _load_manifest_package(path: Path) -> dict:
+    tools = require_toolchain(False)
+    proc = extract_file_to_stdout(tools.seven_zip, path, MANIFEST_NAME)
+    stdout, stderr = proc.communicate()
+    if proc.returncode:
+        raise StreamerError(
+            f"failed to extract manifest from {path.name}: {stderr.decode(errors='replace').strip()}"
+        )
+    try:
+        return json.loads(stdout.decode("utf-8"))
+    except UnicodeDecodeError as exc:
+        raise StreamerError(f"manifest in {path.name} is not valid UTF-8") from exc
+    except json.JSONDecodeError as exc:
+        raise StreamerError(f"manifest in {path.name} is not valid JSON") from exc
+
+
+def _validate_manifest(manifest: dict) -> None:
     if manifest.get("version") != MANIFEST_VERSION:
         raise StreamerError(f"unsupported manifest version: {manifest.get('version')!r}")
     packages = manifest.get("packages")
@@ -62,8 +92,6 @@ def load_manifest(path: Path) -> dict:
         name = package.get("name")
         if not isinstance(name, str) or Path(name).name != name or not name.endswith(".7z"):
             raise StreamerError(f"invalid package name in manifest: {name!r}")
-    return manifest
-
 
 def verify_packages(manifest_path: Path, manifest: dict) -> None:
     base = manifest_path.parent

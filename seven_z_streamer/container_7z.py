@@ -7,7 +7,12 @@ from .constants import PAYLOAD_NAME
 from .errors import StreamerError
 
 
-def create_7z_package(seven_zip: str, payload_path: Path, package_path: Path) -> None:
+def create_7z_package(
+    seven_zip: str,
+    source_path: Path,
+    package_path: Path,
+    archive_name: str = PAYLOAD_NAME,
+) -> None:
     if package_path.exists():
         raise StreamerError(f"refusing to overwrite existing package: {package_path}")
 
@@ -17,8 +22,8 @@ def create_7z_package(seven_zip: str, payload_path: Path, package_path: Path) ->
 
     try:
         result = subprocess.run(
-            [seven_zip, "a", "-t7z", "-mx=0", "-bd", str(temp_package), PAYLOAD_NAME],
-            cwd=str(payload_path.parent),
+            [seven_zip, "a", "-t7z", "-mx=0", "-bd", str(temp_package), archive_name],
+            cwd=str(source_path.parent),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
@@ -35,8 +40,12 @@ def create_7z_package(seven_zip: str, payload_path: Path, package_path: Path) ->
 
 
 def extract_payload_to_stdout(seven_zip: str, package_path: Path) -> subprocess.Popen[bytes]:
+    return extract_file_to_stdout(seven_zip, package_path, PAYLOAD_NAME)
+
+
+def extract_file_to_stdout(seven_zip: str, package_path: Path, archive_name: str) -> subprocess.Popen[bytes]:
     return subprocess.Popen(
-        [seven_zip, "x", "-so", "-bd", str(package_path), PAYLOAD_NAME],
+        [seven_zip, "x", "-so", "-bd", str(package_path), archive_name],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )

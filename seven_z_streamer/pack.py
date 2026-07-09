@@ -1,16 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 import tempfile
 from pathlib import Path
 from typing import BinaryIO
 
 from .checksum import write_bytes_with_sha256
-from .constants import PAYLOAD_NAME
+from .constants import MANIFEST_NAME, PAYLOAD_NAME
 from .container_7z import create_7z_package
 from .errors import StreamerError
-from .json_io import atomic_write_json
 from .manifest import add_package, finalize_manifest, new_manifest
 from .processes import check_processes, terminate_processes
 from .stream_source import read_chunk, start_source_stream
@@ -24,8 +24,8 @@ def pack(args: argparse.Namespace) -> int:
     transfer_dir.mkdir(parents=True, exist_ok=True)
 
     tools = require_toolchain(args.zstd)
-    manifest_path = transfer_dir / f"{args.prefix}-manifest.json"
-    _prepare_output_paths(transfer_dir, args.prefix, manifest_path, args.force)
+    manifest_package_path = transfer_dir / f"{args.prefix}-manifest.7z"
+    _prepare_output_paths(transfer_dir, args.prefix, manifest_package_path, args.force)
 
     manifest = new_manifest(source, args.prefix, args.chunk_size, args.zstd, args.zstd_level)
     processes = []
@@ -61,8 +61,8 @@ def pack(args: argparse.Namespace) -> int:
         raise
 
     finalize_manifest(manifest, total_payload_bytes)
-    atomic_write_json(manifest_path, manifest)
-    print(f"wrote manifest: {manifest_path}", file=sys.stderr)
+    _write_manifest_package(transfer_dir, manifest_package_path, manifest, tools.seven_zip)
+    print(f"wrote manifest package: {manifest_package_path}", file=sys.stderr)
     return 0
 
 
@@ -73,15 +73,13 @@ def _validate_source(source: Path) -> None:
         raise StreamerError(f"source must be a directory: {source}")
 
 
-def _prepare_output_paths(transfer_dir: Path, prefix: str, manifest_path: Path, force: bool) -> None:
-    if manifest_path.exists() and not force:
-        raise StreamerError(f"manifest already exists: {manifest_path}; use --force to replace it")
+def _prepare_output_paths(transfer_dir: Path, prefix: str, manifest_package_path: Path, force: bool) -> None:
+    if manifest_package_path.exists() and not force:
+        raise StreamerError(f"manifest package already exists: {manifest_package_path}; use --force to replace it")
     if not force:
         return
     for stale_package in transfer_dir.glob(f"{prefix}-*.7z"):
         stale_package.unlink()
-    if manifest_path.exists():
-        manifest_path.unlink()
 
 
 def _write_package_payload(
@@ -96,6 +94,17 @@ def _write_package_payload(
         payload_sha256 = write_bytes_with_sha256(payload_path, payload)
         create_7z_package(seven_zip, payload_path, package_path)
     return payload_sha256
+
+
+def _write_manifest_package(transfer_dir: Path, manifest_package_path: Path, manifest: dict, seven_zip: str) -> None:
+    with tempfile.TemporaryDirectory(
+        prefix=f".{manifest_package_path.name}.",
+        suffix=".work",
+        dir=str(transfer_dir),
+    ) as work_dir:
+        manifest_path = Path(work_dir) / MANIFEST_NAME
+        manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        create_7z_package(seven_zip, manifest_path, manifest_package_path, MANIFEST_NAME)
 
 
 def _print_package_status(package_name: str, payload_size: int, package_size: int) -> None:

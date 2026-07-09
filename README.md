@@ -40,13 +40,13 @@ This writes files like:
 ```text
 bigfolder-transfer-000001.7z
 bigfolder-transfer-000002.7z
-bigfolder-transfer-manifest.json
+bigfolder-transfer-manifest.7z
 ```
 
 ## Restore
 
 ```bash
-python -m seven_z_streamer restore /transfer/bigfolder-transfer-manifest.json /restore-target
+python -m seven_z_streamer restore /transfer/bigfolder-transfer-manifest.7z /restore-target
 ```
 
 If all package checksums match, the byte stream is reconstructed exactly.
@@ -57,7 +57,8 @@ The restored files are produced by `tar`; existing files may be overwritten by
 
 - `--zstd` uses fast streaming compression. Use `--no-zstd` for a plain tar
   stream.
-- Each `.7z` package contains one file named `payload.bin`.
+- Each data `.7z` package contains one file named `payload.bin`.
+- The final `*-manifest.7z` package contains one file named `manifest.json`.
 - The manifest records package SHA-256, payload SHA-256, sizes, stream settings,
   and the exact package order.
 - Packing creates one temporary raw chunk at a time in the transfer directory
@@ -76,4 +77,4 @@ The restored files are produced by `tar`; existing files may be overwritten by
 - `payload_stream.py`: extracts package payloads in manifest order.
 - `toolchain.py`: finds and validates required system tools.
 - `validators.py`: CLI value parsers such as chunk size and prefix.
-- `checksum.py`, `json_io.py`, `processes.py`: small shared utilities.
+- `checksum.py`, `processes.py`: small shared utilities.
