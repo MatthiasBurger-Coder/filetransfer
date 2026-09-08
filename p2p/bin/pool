@@ -1,0 +1,334 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_NAME="p2p-filepool"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$APP_NAME"
+STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$APP_NAME"
+INDEX_DIR="$STATE_DIR/indexes"
+CONFIG_FILE="$CONFIG_DIR/config"
+PEERS_FILE="$CONFIG_DIR/peers.conf"
+LOCK_FILE="$STATE_DIR/pool.lock"
+
+NODE_NAME="${POOL_NODE_NAME:-$(hostname -s)}"
+SHARE_DIR="${POOL_SHARE_DIR:-$HOME/FilePool}"
+SSH_CONNECT_TIMEOUT="${POOL_SSH_CONNECT_TIMEOUT:-3}"
+
+log() { printf '[%s] %s\n' "$APP_NAME" "$*" >&2; }
+die() { log "ERROR: $*"; exit 1; }
+need() { command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"; }
+
+load_config() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+  fi
+  NODE_NAME="${POOL_NODE_NAME:-$NODE_NAME}"
+  SHARE_DIR="${POOL_SHARE_DIR:-$SHARE_DIR}"
+}
+
+ensure_dirs() {
+  mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$INDEX_DIR" "$SHARE_DIR"
+  touch "$PEERS_FILE"
+}
+
+require_tools() {
+  need bash
+  need jq
+  need sha256sum
+  need stat
+  need find
+  need rsync
+  need ssh
+  need flock
+}
+
+ssh_target() {
+  local host="$1" user="$2"
+  if [[ -n "$user" && "$user" != "-" ]]; then
+    printf '%s@%s' "$user" "$host"
+  else
+    printf '%s' "$host"
+  fi
+}
+
+peer_line() {
+  local wanted="$1"
+  awk -F '\t' -v n="$wanted" '$1==n {print; exit}' "$PEERS_FILE"
+}
+
+peer_reachable() {
+  local host="$1" user="$2" port="$3" target
+  target="$(ssh_target "$host" "$user")"
+  ssh -o BatchMode=yes -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" -o StrictHostKeyChecking=accept-new -p "$port" "$target" true >/dev/null 2>&1
+}
+
+cmd_init() {
+  require_tools
+  ensure_dirs
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    cat >"$CONFIG_FILE" <<EOF
+POOL_NODE_NAME="$NODE_NAME"
+POOL_SHARE_DIR="$SHARE_DIR"
+POOL_SSH_CONNECT_TIMEOUT="$SSH_CONNECT_TIMEOUT"
+EOF
+  fi
+  chmod 700 "$CONFIG_DIR" "$STATE_DIR" "$INDEX_DIR" 2>/dev/null || true
+  chmod 600 "$CONFIG_FILE" "$PEERS_FILE" 2>/dev/null || true
+  log "initialized node '$NODE_NAME'"
+  log "share directory: $SHARE_DIR"
+  cmd_scan
+}
+
+cmd_scan() {
+  require_tools
+  ensure_dirs
+  local tmp_ndjson tmp_json index_file
+  tmp_ndjson="$(mktemp)"
+  tmp_json="$(mktemp)"
+  index_file="$INDEX_DIR/$NODE_NAME.json"
+  trap 'rm -f "$tmp_ndjson" "$tmp_json"' RETURN
+
+  while IFS= read -r -d '' file; do
+    local rel size mtime hash
+    rel="${file#"$SHARE_DIR"/}"
+    size="$(stat -c '%s' "$file")"
+    mtime="$(stat -c '%Y' "$file")"
+    hash="$(sha256sum -- "$file" | awk '{print $1}')"
+    jq -cn \
+      --arg node "$NODE_NAME" \
+      --arg name "$(basename -- "$file")" \
+      --arg path "$rel" \
+      --arg sha256 "$hash" \
+      --argjson size "$size" \
+      --argjson mtime "$mtime" \
+      '{node:$node,name:$name,path:$path,size:$size,mtime:$mtime,sha256:$sha256}' >>"$tmp_ndjson"
+  done < <(find "$SHARE_DIR" -type f -print0)
+
+  jq -s \
+    --arg node "$NODE_NAME" \
+    --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg share_dir "$SHARE_DIR" \
+    '{schema:1,node:$node,generated_at:$generated_at,share_dir:$share_dir,files:.}' \
+    "$tmp_ndjson" >"$tmp_json"
+
+  mv "$tmp_json" "$index_file"
+  log "indexed $(jq '.files | length' "$index_file") files"
+}
+
+cmd_peer_list() {
+  ensure_dirs
+  if [[ ! -s "$PEERS_FILE" ]]; then
+    printf 'No peers configured.\n'
+    return 0
+  fi
+  printf '%-20s %-30s %-20s %s\n' NODE HOST USER PORT
+  awk -F '\t' '{printf "%-20s %-30s %-20s %s\n",$1,$2,$3,$4}' "$PEERS_FILE"
+}
+
+cmd_peer_add() {
+  ensure_dirs
+  local node="${1:-}" host="${2:-}" user="${3:--}" port="${4:-22}" tmp
+  [[ -n "$node" && -n "$host" ]] || die "usage: pool peer add <node> <host> [user] [port]"
+  [[ "$node" != "$NODE_NAME" ]] || die "cannot add local node as peer"
+  [[ "$port" =~ ^[0-9]+$ ]] || die "invalid port: $port"
+  tmp="$(mktemp)"
+  awk -F '\t' -v n="$node" '$1!=n' "$PEERS_FILE" >"$tmp" || true
+  printf '%s\t%s\t%s\t%s\n' "$node" "$host" "$user" "$port" >>"$tmp"
+  mv "$tmp" "$PEERS_FILE"
+  chmod 600 "$PEERS_FILE" 2>/dev/null || true
+  log "peer '$node' configured"
+}
+
+cmd_peer_remove() {
+  ensure_dirs
+  local node="${1:-}" tmp
+  [[ -n "$node" ]] || die "usage: pool peer remove <node>"
+  tmp="$(mktemp)"
+  awk -F '\t' -v n="$node" '$1!=n' "$PEERS_FILE" >"$tmp" || true
+  mv "$tmp" "$PEERS_FILE"
+  rm -f "$INDEX_DIR/$node.json"
+  log "peer '$node' removed"
+}
+
+cmd_sync() {
+  require_tools
+  ensure_dirs
+  [[ -f "$INDEX_DIR/$NODE_NAME.json" ]] || cmd_scan
+  exec 9>"$LOCK_FILE"
+  flock -n 9 || { log "sync already running"; return 0; }
+
+  local ok=0 failed=0
+  while IFS=$'\t' read -r node host user port; do
+    [[ -n "${node:-}" ]] || continue
+    port="${port:-22}"
+    local target remote_state remote_indexes
+    target="$(ssh_target "$host" "$user")"
+    remote_state=".local/share/$APP_NAME"
+    remote_indexes="$remote_state/indexes"
+
+    if ! peer_reachable "$host" "$user" "$port"; then
+      log "peer offline: $node ($host)"
+      failed=$((failed+1))
+      continue
+    fi
+
+    ssh -o BatchMode=yes -o ConnectTimeout="$SSH_CONNECT_TIMEOUT" -p "$port" "$target" "mkdir -p '$remote_indexes'" >/dev/null
+    rsync -az -e "ssh -o BatchMode=yes -o ConnectTimeout=$SSH_CONNECT_TIMEOUT -p $port" \
+      "$INDEX_DIR/$NODE_NAME.json" "$target:$remote_indexes/$NODE_NAME.json"
+
+    rsync -az --include='*.json' --exclude='*' \
+      -e "ssh -o BatchMode=yes -o ConnectTimeout=$SSH_CONNECT_TIMEOUT -p $port" \
+      "$target:$remote_indexes/" "$INDEX_DIR/"
+    ok=$((ok+1))
+    log "metadata synchronized with $node"
+  done <"$PEERS_FILE"
+
+  log "sync complete: $ok peer(s) reached, $failed offline/failed"
+}
+
+all_file_rows() {
+  shopt -s nullglob
+  local idx
+  for idx in "$INDEX_DIR"/*.json; do
+    jq -r '.files[]? | [.node,.name,.path,(.size|tostring),(.mtime|tostring),.sha256] | @tsv' "$idx"
+  done
+}
+
+cmd_ls() {
+  ensure_dirs
+  printf '%-18s %-36s %-12s %-64s %s\n' NODE NAME SIZE SHA256 PATH
+  all_file_rows | sort -t $'\t' -k2,2 | while IFS=$'\t' read -r node name path size _mtime hash; do
+    printf '%-18s %-36s %-12s %-64s %s\n' "$node" "$name" "$size" "$hash" "$path"
+  done
+}
+
+cmd_find() {
+  ensure_dirs
+  local pattern="${1:-}"
+  [[ -n "$pattern" ]] || die "usage: pool find <pattern>"
+  all_file_rows | awk -F '\t' -v IGNORECASE=1 -v p="$pattern" 'index(tolower($2),tolower(p)) || index(tolower($3),tolower(p)) || index($6,p) {print}' |
+    while IFS=$'\t' read -r node name path size _mtime hash; do
+      printf '%s\t%s\t%s\t%s\t%s\n' "$node" "$name" "$size" "$hash" "$path"
+    done
+}
+
+cmd_status() {
+  ensure_dirs
+  printf '%-20s %-30s %s\n' NODE HOST STATUS
+  printf '%-20s %-30s %s\n' "$NODE_NAME" localhost ONLINE
+  while IFS=$'\t' read -r node host user port; do
+    [[ -n "${node:-}" ]] || continue
+    if peer_reachable "$host" "$user" "${port:-22}"; then
+      printf '%-20s %-30s %s\n' "$node" "$host" ONLINE
+    else
+      printf '%-20s %-30s %s\n' "$node" "$host" OFFLINE
+    fi
+  done <"$PEERS_FILE"
+}
+
+cmd_publish() {
+  ensure_dirs
+  local source="${1:-}"
+  [[ -f "$source" ]] || die "file not found: $source"
+  cp -a -- "$source" "$SHARE_DIR/"
+  cmd_scan
+  log "published $(basename -- "$source")"
+}
+
+lookup_candidates() {
+  local query="$1"
+  all_file_rows | awk -F '\t' -v q="$query" '$2==q || $6==q {print}'
+}
+
+cmd_get() {
+  require_tools
+  ensure_dirs
+  local query="${1:-}" dest="${2:-.}"
+  [[ -n "$query" ]] || die "usage: pool get <name-or-hash> [destination]"
+  mkdir -p "$dest"
+
+  local found=0
+  while IFS=$'\t' read -r node name path size _mtime hash; do
+    [[ -n "${node:-}" ]] || continue
+    found=1
+    local out="$dest/$name"
+
+    if [[ "$node" == "$NODE_NAME" ]]; then
+      local src="$SHARE_DIR/$path"
+      [[ -f "$src" ]] || continue
+      cp -a -- "$src" "$out"
+    else
+      local line host user port target remote_share
+      line="$(peer_line "$node" || true)"
+      [[ -n "$line" ]] || continue
+      IFS=$'\t' read -r _ host user port <<<"$line"
+      port="${port:-22}"
+      peer_reachable "$host" "$user" "$port" || continue
+      target="$(ssh_target "$host" "$user")"
+      remote_share="$(jq -r '.share_dir' "$INDEX_DIR/$node.json")"
+      rsync -a --partial -e "ssh -o BatchMode=yes -o ConnectTimeout=$SSH_CONNECT_TIMEOUT -p $port" \
+        "$target:$remote_share/$path" "$out"
+    fi
+
+    local actual
+    actual="$(sha256sum -- "$out" | awk '{print $1}')"
+    if [[ "$actual" != "$hash" ]]; then
+      rm -f -- "$out"
+      die "integrity check failed for $name"
+    fi
+    log "retrieved $name from $node -> $out"
+    return 0
+  done < <(lookup_candidates "$query")
+
+  if [[ "$found" -eq 0 ]]; then
+    die "content not found in metadata: $query"
+  fi
+  die "content known but no reachable peer currently provides it: $query"
+}
+
+usage() {
+  cat <<'EOF'
+Usage:
+  pool init
+  pool scan
+  pool sync
+  pool status
+  pool ls
+  pool find <pattern>
+  pool get <name-or-hash> [destination]
+  pool publish <file>
+  pool peer list
+  pool peer add <node> <host> [user] [port]
+  pool peer remove <node>
+EOF
+}
+
+main() {
+  load_config
+  ensure_dirs
+  local cmd="${1:-help}"
+  shift || true
+  case "$cmd" in
+    init) cmd_init "$@" ;;
+    scan) cmd_scan "$@" ;;
+    sync) cmd_sync "$@" ;;
+    status) cmd_status "$@" ;;
+    ls) cmd_ls "$@" ;;
+    find) cmd_find "$@" ;;
+    get) cmd_get "$@" ;;
+    publish) cmd_publish "$@" ;;
+    peer)
+      local sub="${1:-list}"; shift || true
+      case "$sub" in
+        list) cmd_peer_list "$@" ;;
+        add) cmd_peer_add "$@" ;;
+        remove) cmd_peer_remove "$@" ;;
+        *) die "unknown peer command: $sub" ;;
+      esac
+      ;;
+    help|-h|--help) usage ;;
+    *) usage; die "unknown command: $cmd" ;;
+  esac
+}
+
+main "$@"
