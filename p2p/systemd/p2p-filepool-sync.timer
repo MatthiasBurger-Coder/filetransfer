@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically synchronize P2P File Pool metadata
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+RandomizedDelaySec=5s
+Persistent=true
+Unit=p2p-filepool-sync.service
+
+[Install]
+WantedBy=timers.target
