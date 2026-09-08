@@ -1,0 +1,87 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+APP_NAME="p2p-filepool"
+CONFIG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$APP_NAME"
+STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/$APP_NAME"
+INDEX_DIR="$STATE_DIR/indexes"
+CONFIG_FILE="$CONFIG_DIR/config"
+PEERS_FILE="$CONFIG_DIR/peers.conf"
+NODE_NAME="${POOL_NODE_NAME:-$(hostname -s)}"
+SHARE_DIR="${POOL_SHARE_DIR:-$HOME/FilePool}"
+CORE="${POOL_CORE:-$HOME/.local/lib/p2p-filepool/pool-core}"
+
+load_config() {
+  if [[ -f "$CONFIG_FILE" ]]; then
+    # shellcheck disable=SC1090
+    source "$CONFIG_FILE"
+  fi
+  NODE_NAME="${POOL_NODE_NAME:-$NODE_NAME}"
+  SHARE_DIR="${POOL_SHARE_DIR:-$SHARE_DIR}"
+}
+
+ensure_dirs() {
+  mkdir -p "$CONFIG_DIR" "$STATE_DIR" "$INDEX_DIR" "$SHARE_DIR"
+  touch "$PEERS_FILE"
+}
+
+scan() {
+  ensure_dirs
+  command -v jq >/dev/null || { echo 'jq is required' >&2; exit 1; }
+  local ndjson json index file rel size mtime hash
+  ndjson="$(mktemp)"
+  json="$(mktemp)"
+  index="$INDEX_DIR/$NODE_NAME.json"
+
+  while IFS= read -r -d '' file; do
+    rel="${file#"$SHARE_DIR"/}"
+    size="$(stat -c '%s' "$file")"
+    mtime="$(stat -c '%Y' "$file")"
+    hash="$(sha256sum -- "$file" | awk '{print $1}')"
+    jq -cn --arg node "$NODE_NAME" --arg name "$(basename -- "$file")" \
+      --arg path "$rel" --arg sha256 "$hash" --argjson size "$size" --argjson mtime "$mtime" \
+      '{node:$node,name:$name,path:$path,size:$size,mtime:$mtime,sha256:$sha256}' >>"$ndjson"
+  done < <(find "$SHARE_DIR" -type f -print0)
+
+  jq -s --arg node "$NODE_NAME" --arg generated_at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg share_dir "$SHARE_DIR" \
+    '{schema:1,node:$node,generated_at:$generated_at,share_dir:$share_dir,files:.}' "$ndjson" >"$json"
+  mv "$json" "$index"
+  rm -f "$ndjson"
+  printf '[%s] indexed %s files\n' "$APP_NAME" "$(jq '.files|length' "$index")" >&2
+}
+
+init_pool() {
+  ensure_dirs
+  if [[ ! -f "$CONFIG_FILE" ]]; then
+    cat >"$CONFIG_FILE" <<EOF
+POOL_NODE_NAME="$NODE_NAME"
+POOL_SHARE_DIR="$SHARE_DIR"
+POOL_SSH_CONNECT_TIMEOUT="${POOL_SSH_CONNECT_TIMEOUT:-3}"
+EOF
+  fi
+  chmod 700 "$CONFIG_DIR" "$STATE_DIR" "$INDEX_DIR" 2>/dev/null || true
+  chmod 600 "$CONFIG_FILE" "$PEERS_FILE" 2>/dev/null || true
+  scan
+}
+
+publish() {
+  local source="${1:-}"
+  [[ -f "$source" ]] || { echo "file not found: $source" >&2; exit 1; }
+  ensure_dirs
+  cp -a -- "$source" "$SHARE_DIR/"
+  scan
+}
+
+main() {
+  load_config
+  local cmd="${1:-help}"
+  case "$cmd" in
+    init) init_pool ;;
+    scan) scan ;;
+    publish) shift; publish "$@" ;;
+    *) [[ -x "$CORE" ]] || { echo "P2P core not installed: $CORE" >&2; exit 1; }; exec "$CORE" "$@" ;;
+  esac
+}
+
+main "$@"
