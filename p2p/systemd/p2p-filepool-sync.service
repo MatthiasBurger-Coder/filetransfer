@@ -1,0 +1,9 @@
+[Unit]
+Description=P2P File Pool metadata scan and sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/pool scan
+ExecStart=%h/.local/bin/pool sync
