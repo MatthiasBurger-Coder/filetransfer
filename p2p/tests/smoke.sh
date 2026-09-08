@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-POOL="$ROOT_DIR/bin/pool"
+POOL="$ROOT_DIR/bin/pool-wrapper"
 TMP_HOME="$(mktemp -d)"
 trap 'rm -rf "$TMP_HOME"' EXIT
 
@@ -11,6 +11,7 @@ export XDG_CONFIG_HOME="$TMP_HOME/.config"
 export XDG_DATA_HOME="$TMP_HOME/.local/share"
 export POOL_NODE_NAME="smoke-node"
 export POOL_SHARE_DIR="$TMP_HOME/FilePool"
+export POOL_CORE="$ROOT_DIR/bin/pool"
 
 "$POOL" init
 
